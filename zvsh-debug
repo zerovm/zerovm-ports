@@ -1,0 +1,76 @@
+#!/bin/bash
+ZVMRUN="/usr/bin/zerovm -QP"
+MANIFEST=$(mktemp)
+FOUT=$(mktemp)
+trap "{ rm -rf $MANIFEST $FOUT; exit $?; }" SIGINT SIGTERM EXIT
+if [ -z "$1" ]; then
+cat << EOF
+	Simple "shell like" runner for binaries compiled for zerovm
+
+	Usage: $0 <path to zerovm binary> [arg1] @[file1] [arg2] @[file2]
+	
+	Examples:
+	  run in linux:
+	    grep 'word' /tmp/some/file > /tmp/output
+	  run in zerovm:
+	    zvsh grep 'word' @/tmp/some/file > /tmp/output
+
+	  run in linux:
+	    cat test.jpg | composite -compose bumpmap logo.jpeg > out.jpg
+	  run in zerovm:
+	    cat test.jpg | zvsh composite -compose bumpmap @logo.jpeg > out.jpg
+	
+	Bottom line: use the same command line you have in Linux, just prepend it with "zvsh" and mark down all files in command line with "@" signs
+
+EOF
+	exit 1
+fi
+EXE="$1"
+shift
+EXENAME=$(basename "$EXE")
+cat > "$MANIFEST" << EOF
+Version = 09082012
+MemMax = 419430400
+NodeName = $EXENAME, 1
+Timeout = 50
+Nexe = $EXE
+EOF
+while (( $# )); do
+	if [[ "${1:0:1}" == "@" ]]; then
+		if [[ $(expr index "$1" "=") != "0" ]]; then
+			ENVKEY="${1:1}"
+			ENVKV=(${ENVKEY//=/ })
+			ENVLIST="${ENVKV[0]},${ENVKV[1]},${ENVLIST}"
+		else
+			FPATH="${1:1}"
+			FNAME=$(basename "$FPATH")
+			if [[ "$FPATH" == "$FNAME" ]] || [[ "$FPATH" == "./${FNAME}" ]]; then
+				FPATH="$(pwd)/$FPATH"
+			fi
+			FNAME=$(mktemp -u XXXXXX."$FNAME")
+			echo "Channel = $FPATH, /dev/$FNAME, 3, 419430400, 419430400, 419430400, 419430400" >> "$MANIFEST"
+			ZVMARGS="$ZVMARGS /dev/$FNAME"
+		fi
+	else
+		ZVMARGS="$ZVMARGS $1"
+	fi
+	shift
+done
+cat >> "$MANIFEST" << EOF
+Channel = /dev/stdin, /dev/stdin, 0, 419430400, 419430400, 0, 0
+Channel = $FOUT, /dev/stdout, 0, 0, 0, 419430400, 419430400
+Channel = /dev/stderr, /dev/stderr, 0, 0, 0, 419430400, 419430400
+Channel = /tmp/debug.log, /dev/debug, 0, 0, 0, 419430400, 419430400
+EOF
+if [ -n "$ZVMARGS" ]; then
+	echo "CommandLine = $ZVMARGS" >> "$MANIFEST"
+fi
+if [ -n "$ENVLIST" ]; then
+	echo "Environment = $ENVLIST" >> "$MANIFEST"
+fi
+cat "$MANIFEST" 1>&2
+$ZVMRUN "$MANIFEST" 1>&2
+EXT="$?"
+cat $FOUT
+exit $EXT
+
