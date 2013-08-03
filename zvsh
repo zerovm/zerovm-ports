@@ -1,9 +1,11 @@
 #!/bin/bash
 ZVMRUN="zerovm -QP"
 MANIFEST=$(mktemp)
-FOUT=$(mktemp)
+DOUT=$(mktemp -d)
+FOUT="$DOUT/out"
+mkfifo $FOUT
 NVRAM=$(mktemp)
-trap "{ rm -rf $MANIFEST $FOUT $NVRAM; exit $?; }" SIGINT SIGTERM EXIT
+trap "{ rm -rf $MANIFEST $DOUT $NVRAM; exit $?; }" SIGINT SIGTERM EXIT
 if [ -z "$1" ]; then
 cat << EOF
 	Simple "shell like" runner for binaries compiled for zerovm
@@ -72,8 +74,8 @@ echo "[args]" >> $NVRAM
 echo -e "args=${EXENAME}${ZVMARGS}\n" >> $NVRAM
 cat "$MANIFEST" 1>&2
 cat "$NVRAM" 1>&2
-$ZVMRUN "$MANIFEST" 1>&2
-EXT="$?"
+cat - | $ZVMRUN "$MANIFEST" 1>&2 &
 cat $FOUT
+EXT="$?"
 exit $EXT
 
