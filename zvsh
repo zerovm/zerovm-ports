@@ -3,7 +3,9 @@ ZVMRUN="zerovm -QP"
 MANIFEST=$(mktemp)
 DOUT=$(mktemp -d)
 FOUT="$DOUT/out"
+FERR="$DOUT/err"
 mkfifo $FOUT
+mkfifo $FERR
 NVRAM=$(mktemp)
 trap "{ rm -rf $MANIFEST $DOUT $NVRAM; exit $?; }" SIGINT SIGTERM EXIT
 if [ -z "$1" ]; then
@@ -63,7 +65,7 @@ done
 cat >> "$MANIFEST" << EOF
 Channel = /dev/stdin, /dev/stdin, 0, 0, 419430400, 419430400, 0, 0
 Channel = $FOUT, /dev/stdout, 0, 0, 0, 0, 419430400, 419430400
-Channel = /dev/stderr, /dev/stderr, 0, 0, 0, 0, 419430400, 419430400
+Channel = $FERR, /dev/stderr, 0, 0, 0, 0, 419430400, 419430400
 Channel = $NVRAM, /dev/nvram, 1, 0, 419430400, 419430400, 0, 0
 EOF
 if [ -n "$ENVLIST" ]; then
@@ -72,10 +74,14 @@ if [ -n "$ENVLIST" ]; then
 fi
 echo "[args]" >> $NVRAM
 echo -e "args=${EXENAME}${ZVMARGS}\n" >> $NVRAM
-cat "$MANIFEST" 1>&2
-cat "$NVRAM" 1>&2
-cat - | $ZVMRUN "$MANIFEST" 1>&2 &
-cat $FOUT
+echo "-----------------" >> /tmp/zvm.log
+cat "$MANIFEST" >> /tmp/zvm.log
+cat "$NVRAM" >> /tmp/zvm.log
+#cat "$MANIFEST" 1>&2
+#cat "$NVRAM" 1>&2
+cat - | $ZVMRUN "$MANIFEST" >> /tmp/zvm.log 2>&1 &
+cat $FOUT &
+cat $FERR
 EXT="$?"
 exit $EXT
 
