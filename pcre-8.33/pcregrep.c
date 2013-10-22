@@ -47,6 +47,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <assert.h>
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -1235,7 +1236,7 @@ Returns:    pointer to the start of the previous line
 */
 
 static char *
-previous_line(char *p, char *startptr)
+previous_line(char *p, char *startptr, int* lenptr)
 {
 switch(endlinetype)
   {
@@ -1243,11 +1244,19 @@ switch(endlinetype)
   case EL_LF:
   p--;
   while (p > startptr && p[-1] != '\n') p--;
+  if (p > startptr)
+    *lenptr = 1;
+  else
+    *lenptr = 0;
   return p;
 
   case EL_CR:
   p--;
   while (p > startptr && p[-1] != '\n') p--;
+  if (p > startptr)
+    *lenptr = 1;
+  else
+    *lenptr = 0;
   return p;
 
   case EL_CRLF:
@@ -1464,10 +1473,12 @@ int linenumber = 1;
 int lastmatchnumber = 0;
 int count = 0;
 int filepos = 0;
+int filesize = 0;
 int offsets[OFFSET_SIZE];
 char *lastmatchrestart = NULL;
 char *ptr = main_buffer;
 char *endptr;
+char* startptr = main_buffer;
 size_t bufflength;
 BOOL binary = FALSE;
 BOOL endhyphenpending = FALSE;
@@ -1512,9 +1523,37 @@ else
   {
   in = (FILE *)handle;
   if (is_file_tty(in)) input_line_buffered = TRUE;
-  bufflength = input_line_buffered?
-    read_one_line(main_buffer, bufsize, in) :
-    fread(main_buffer, 1, bufsize, in);
+
+  if (input_line_buffered)
+    bufflength = read_one_line(main_buffer, bufsize, in);
+  else
+  {
+    // do not ask 'bout it
+    fseek(in, 0, SEEK_END);
+    filesize = filepos = ftell(in);
+    assert (filesize && "Can't detect input file size! (make sure to mount it with random access)");
+
+    // set filepos to bufsize bytes from the end
+    if (filepos - bufsize < 0)
+    {
+      // buffer is bigger than file
+      // start from the beginning
+      fseek(in, 0, SEEK_SET);
+      filepos = ftell(in);
+      // read whole file
+      bufflength = fread(main_buffer, 1, filesize, in);
+    }
+    else
+    {
+      // file is bigger
+      // move to the end of file
+      fseek(in, -bufsize, SEEK_END);
+      filepos = ftell(in);
+      // read last bufsize bytes
+      bufflength = fread(main_buffer, 1, bufsize, in);
+    }
+    ptr = main_buffer + bufflength;
+  }
   }
 
 endptr = main_buffer + bufflength;
@@ -1535,9 +1574,9 @@ files, endptr will be at the end of the buffer when we are in the middle of the
 file, but ptr will never get there, because as soon as it gets over 2/3 of the
 way, the buffer is shifted left and re-filled. */
 
-while (ptr < endptr)
+while (ptr > startptr)
   {
-  int endlinelength;
+  int endlinelength = 0;
   int mrc = 0;
   int startoffset = 0;
   unsigned int options = 0;
@@ -1554,15 +1593,16 @@ while (ptr < endptr)
   option is used for compiling, so that any match is constrained to be in the
   first line. */
 
-  t = end_of_line(t, endptr, &endlinelength);
-  linelength = t - ptr - endlinelength;
-  length = multiline? (size_t)(endptr - ptr) : linelength;
+  t = previous_line(t, startptr, &endlinelength);
+  linelength = ptr - t - endlinelength;
+  length = multiline? (size_t)(ptr - startptr) : linelength;
+  matchptr = ptr = t;
 
   /* Check to see if the line we are looking at extends right to the very end
   of the buffer without a line terminator. This means the line is too long to
   handle. */
 
-  if (endlinelength == 0 && t == main_buffer + bufsize)
+  if (endlinelength == 0 && t == startptr + bufsize)
     {
     fprintf(stderr, "pcregrep: line %d%s%s is too long for the internal buffer\n"
                     "pcregrep: check the --buffer-size option\n",
@@ -1798,7 +1838,7 @@ while (ptr < endptr)
                linecount < before_context)
           {
           linecount++;
-          p = previous_line(p, main_buffer);
+          p = previous_line(p, main_buffer, &endlinelength);
           }
 
         if (lastmatchnumber > 0 && p > lastmatchrestart && !hyphenprinted)
@@ -1932,8 +1972,6 @@ while (ptr < endptr)
   /* Advance to after the newline and increment the line number. The file
   offset to the current line is maintained in filepos. */
 
-  ptr += linelength + endlinelength;
-  filepos += (int)(linelength + endlinelength);
   linenumber++;
 
   /* If input is line buffered, and the buffer is not yet full, read another
@@ -1951,7 +1989,7 @@ while (ptr < endptr)
   1/3 and refill it. Before we do this, if some unprinted "after" lines are
   about to be lost, print them. */
 
-  if (bufflength >= (size_t)bufsize && ptr > main_buffer + 2*bufthird)
+  if (filepos > 0 && ptr < main_buffer + bufthird)
     {
     if (after_context > 0 &&
         lastmatchnumber > 0 &&
@@ -1963,8 +2001,8 @@ while (ptr < endptr)
 
     /* Now do the shuffle */
 
-    memmove(main_buffer, main_buffer + bufthird, 2*bufthird);
-    ptr -= bufthird;
+    memmove(main_buffer + bufthird, main_buffer, 2*bufthird);
+    ptr += bufthird;
 
 #ifdef SUPPORT_LIBZ
     if (frtype == FR_LIBZ)
@@ -1980,10 +2018,32 @@ while (ptr < endptr)
     else
 #endif
 
-    bufflength = 2*bufthird +
-      (input_line_buffered?
-       read_one_line(main_buffer + 2*bufthird, bufthird, in) :
-       fread(main_buffer + 2*bufthird, 1, bufthird, in));
+    bufflength = 2*bufthird + 0;
+    if (input_line_buffered)
+      bufflength += read_one_line(main_buffer + 2*bufthird, bufthird, in);
+    else
+    {
+      int off = filepos - bufthird;
+      if (off < 0)
+      {
+        // move to the beginning
+        fseek(in, 0, SEEK_SET);
+        // read everything that left
+        bufflength += fread(main_buffer + bufthird - filepos, 1, filepos, in);
+        startptr = main_buffer + bufthird - filepos;
+        // we've read everything, set filepos to 0 not
+        filepos = 0;
+      }
+      else
+      {
+        // we can read smth from file
+        // seek back for bufthird bytes
+        fseek(in, off, SEEK_SET);
+        filepos = ftell(in);
+        // read bufthird bytes
+        bufflength += fread(main_buffer, 1, bufthird, in);
+      }
+    }
     endptr = main_buffer + bufflength;
 
     /* Adjust any last match point */
