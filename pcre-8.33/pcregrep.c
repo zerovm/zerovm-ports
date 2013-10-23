@@ -1236,7 +1236,11 @@ Returns:    pointer to the start of the previous line
 */
 
 static char *
+#ifndef INVERSE_GREP
+previous_line(char *p, char *startptr)
+#else
 previous_line(char *p, char *startptr, int* lenptr)
+#endif
 {
 switch(endlinetype)
   {
@@ -1244,19 +1248,23 @@ switch(endlinetype)
   case EL_LF:
   p--;
   while (p > startptr && p[-1] != '\n') p--;
+#ifdef INVERSE_GREP
   if (p > startptr)
     *lenptr = 1;
   else
     *lenptr = 0;
+#endif
   return p;
 
   case EL_CR:
   p--;
   while (p > startptr && p[-1] != '\n') p--;
+#ifdef INVERSE_GREP
   if (p > startptr)
     *lenptr = 1;
   else
     *lenptr = 0;
+#endif
   return p;
 
   case EL_CRLF:
@@ -1465,6 +1473,576 @@ Returns:       0 if there was at least one match
                3 if there is a read error on a .bz2 file
 */
 
+#ifndef INVERSE_GREP
+static int
+pcregrep(void *handle, int frtype, char *filename, char *printname)
+{
+int rc = 1;
+int linenumber = 1;
+int lastmatchnumber = 0;
+int count = 0;
+int filepos = 0;
+int offsets[OFFSET_SIZE];
+char *lastmatchrestart = NULL;
+char *ptr = main_buffer;
+char *endptr;
+size_t bufflength;
+BOOL binary = FALSE;
+BOOL endhyphenpending = FALSE;
+BOOL input_line_buffered = line_buffered;
+FILE *in = NULL;                    /* Ensure initialized */
+
+#ifdef SUPPORT_LIBZ
+gzFile ingz = NULL;
+#endif
+
+#ifdef SUPPORT_LIBBZ2
+BZFILE *inbz2 = NULL;
+#endif
+
+
+/* Do the first read into the start of the buffer and set up the pointer to end
+of what we have. In the case of libz, a non-zipped .gz file will be read as a
+plain file. However, if a .bz2 file isn't actually bzipped, the first read will
+fail. */
+
+(void)frtype;
+
+#ifdef SUPPORT_LIBZ
+if (frtype == FR_LIBZ)
+  {
+  ingz = (gzFile)handle;
+  bufflength = gzread (ingz, main_buffer, bufsize);
+  }
+else
+#endif
+
+#ifdef SUPPORT_LIBBZ2
+if (frtype == FR_LIBBZ2)
+  {
+  inbz2 = (BZFILE *)handle;
+  bufflength = BZ2_bzread(inbz2, main_buffer, bufsize);
+  if ((int)bufflength < 0) return 2;   /* Gotcha: bufflength is size_t; */
+  }                                    /* without the cast it is unsigned. */
+else
+#endif
+
+  {
+  in = (FILE *)handle;
+  if (is_file_tty(in)) input_line_buffered = TRUE;
+  bufflength = input_line_buffered?
+    read_one_line(main_buffer, bufsize, in) :
+    fread(main_buffer, 1, bufsize, in);
+  }
+
+endptr = main_buffer + bufflength;
+
+/* Unless binary-files=text, see if we have a binary file. This uses the same
+rule as GNU grep, namely, a search for a binary zero byte near the start of the
+file. */
+
+if (binary_files != BIN_TEXT)
+  {
+  binary =
+    memchr(main_buffer, 0, (bufflength > 1024)? 1024 : bufflength) != NULL;
+  if (binary && binary_files == BIN_NOMATCH) return 1;
+  }
+
+/* Loop while the current pointer is not at the end of the file. For large
+files, endptr will be at the end of the buffer when we are in the middle of the
+file, but ptr will never get there, because as soon as it gets over 2/3 of the
+way, the buffer is shifted left and re-filled. */
+
+while (ptr < endptr)
+  {
+  int endlinelength;
+  int mrc = 0;
+  int startoffset = 0;
+  unsigned int options = 0;
+  BOOL match;
+  char *matchptr = ptr;
+  char *t = ptr;
+  size_t length, linelength;
+
+  /* At this point, ptr is at the start of a line. We need to find the length
+  of the subject string to pass to pcre_exec(). In multiline mode, it is the
+  length remainder of the data in the buffer. Otherwise, it is the length of
+  the next line, excluding the terminating newline. After matching, we always
+  advance by the length of the next line. In multiline mode the PCRE_FIRSTLINE
+  option is used for compiling, so that any match is constrained to be in the
+  first line. */
+
+  t = end_of_line(t, endptr, &endlinelength);
+  linelength = t - ptr - endlinelength;
+  length = multiline? (size_t)(endptr - ptr) : linelength;
+
+  /* Check to see if the line we are looking at extends right to the very end
+  of the buffer without a line terminator. This means the line is too long to
+  handle. */
+
+  if (endlinelength == 0 && t == main_buffer + bufsize)
+    {
+    fprintf(stderr, "pcregrep: line %d%s%s is too long for the internal buffer\n"
+                    "pcregrep: check the --buffer-size option\n",
+                    linenumber,
+                    (filename == NULL)? "" : " of file ",
+                    (filename == NULL)? "" : filename);
+    return 2;
+    }
+
+  /* Extra processing for Jeffrey Friedl's debugging. */
+
+#ifdef JFRIEDL_DEBUG
+  if (jfriedl_XT || jfriedl_XR)
+  {
+#     include <sys/time.h>
+#     include <time.h>
+      struct timeval start_time, end_time;
+      struct timezone dummy;
+      int i;
+
+      if (jfriedl_XT)
+      {
+          unsigned long newlen = length * jfriedl_XT + strlen(jfriedl_prefix) + strlen(jfriedl_postfix);
+          const char *orig = ptr;
+          ptr = malloc(newlen + 1);
+          if (!ptr) {
+                  printf("out of memory");
+                  pcregrep_exit(2);
+          }
+          endptr = ptr;
+          strcpy(endptr, jfriedl_prefix); endptr += strlen(jfriedl_prefix);
+          for (i = 0; i < jfriedl_XT; i++) {
+                  strncpy(endptr, orig,  length);
+                  endptr += length;
+          }
+          strcpy(endptr, jfriedl_postfix); endptr += strlen(jfriedl_postfix);
+          length = newlen;
+      }
+
+      if (gettimeofday(&start_time, &dummy) != 0)
+              perror("bad gettimeofday");
+
+
+      for (i = 0; i < jfriedl_XR; i++)
+          match = (pcre_exec(patterns->compiled, patterns->hint, ptr, length, 0,
+              PCRE_NOTEMPTY, offsets, OFFSET_SIZE) >= 0);
+
+      if (gettimeofday(&end_time, &dummy) != 0)
+              perror("bad gettimeofday");
+
+      double delta = ((end_time.tv_sec + (end_time.tv_usec / 1000000.0))
+                      -
+                      (start_time.tv_sec + (start_time.tv_usec / 1000000.0)));
+
+      printf("%s TIMER[%.4f]\n", match ? "MATCH" : "FAIL", delta);
+      return 0;
+  }
+#endif
+
+  /* We come back here after a match when show_only_matching is set, in order
+  to find any further matches in the same line. This applies to
+  --only-matching, --file-offsets, and --line-offsets. */
+
+  ONLY_MATCHING_RESTART:
+
+  /* Run through all the patterns until one matches or there is an error other
+  than NOMATCH. This code is in a subroutine so that it can be re-used for
+  finding subsequent matches when colouring matched lines. After finding one
+  match, set PCRE_NOTEMPTY to disable any further matches of null strings in
+  this line. */
+
+  match = match_patterns(matchptr, length, options, startoffset, offsets, &mrc);
+  options = PCRE_NOTEMPTY;
+
+  /* If it's a match or a not-match (as required), do what's wanted. */
+
+  if (match != invert)
+    {
+    BOOL hyphenprinted = FALSE;
+
+    /* We've failed if we want a file that doesn't have any matches. */
+
+    if (filenames == FN_NOMATCH_ONLY) return 1;
+
+    /* Just count if just counting is wanted. */
+
+    if (count_only) count++;
+
+    /* When handling a binary file and binary-files==binary, the "binary"
+    variable will be set true (it's false in all other cases). In this
+    situation we just want to output the file name. No need to scan further. */
+
+    else if (binary)
+      {
+      fprintf(stdout, "Binary file %s matches\n", filename);
+      return 0;
+      }
+
+    /* If all we want is a file name, there is no need to scan any more lines
+    in the file. */
+
+    else if (filenames == FN_MATCH_ONLY)
+      {
+      fprintf(stdout, "%s\n", printname);
+      return 0;
+      }
+
+    /* Likewise, if all we want is a yes/no answer. */
+
+    else if (quiet) return 0;
+
+    /* The --only-matching option prints just the substring that matched,
+    and/or one or more captured portions of it, as long as these strings are
+    not empty. The --file-offsets and --line-offsets options output offsets for
+    the matching substring (all three set show_only_matching). None of these
+    mutually exclusive options prints any context. Afterwards, adjust the start
+    and then jump back to look for further matches in the same line. If we are
+    in invert mode, however, nothing is printed and we do not restart - this
+    could still be useful because the return code is set. */
+
+    else if (show_only_matching)
+      {
+      if (!invert)
+        {
+        if (printname != NULL) fprintf(stdout, "%s:", printname);
+        if (number) fprintf(stdout, "%d:", linenumber);
+
+        /* Handle --line-offsets */
+
+        if (line_offsets)
+          fprintf(stdout, "%d,%d\n", (int)(matchptr + offsets[0] - ptr),
+            offsets[1] - offsets[0]);
+
+        /* Handle --file-offsets */
+
+        else if (file_offsets)
+          fprintf(stdout, "%d,%d\n",
+            (int)(filepos + matchptr + offsets[0] - ptr),
+            offsets[1] - offsets[0]);
+
+        /* Handle --only-matching, which may occur many times */
+
+        else
+          {
+          BOOL printed = FALSE;
+          omstr *om;
+
+          for (om = only_matching; om != NULL; om = om->next)
+            {
+            int n = om->groupnum;
+            if (n < mrc)
+              {
+              int plen = offsets[2*n + 1] - offsets[2*n];
+              if (plen > 0)
+                {
+                if (printed) fprintf(stdout, "%s", om_separator);
+                if (do_colour) fprintf(stdout, "%c[%sm", 0x1b, colour_string);
+                FWRITE(matchptr + offsets[n*2], 1, plen, stdout);
+                if (do_colour) fprintf(stdout, "%c[00m", 0x1b);
+                printed = TRUE;
+                }
+              }
+            }
+
+          if (printed || printname != NULL || number) fprintf(stdout, "\n");
+          }
+
+        /* Prepare to repeat to find the next match */
+
+        match = FALSE;
+        if (line_buffered) fflush(stdout);
+        rc = 0;                      /* Had some success */
+        startoffset = offsets[1];    /* Restart after the match */
+        goto ONLY_MATCHING_RESTART;
+        }
+      }
+
+    /* This is the default case when none of the above options is set. We print
+    the matching lines(s), possibly preceded and/or followed by other lines of
+    context. */
+
+    else
+      {
+      /* See if there is a requirement to print some "after" lines from a
+      previous match. We never print any overlaps. */
+
+      if (after_context > 0 && lastmatchnumber > 0)
+        {
+        int ellength;
+        int linecount = 0;
+        char *p = lastmatchrestart;
+
+        while (p < ptr && linecount < after_context)
+          {
+          p = end_of_line(p, ptr, &ellength);
+          linecount++;
+          }
+
+        /* It is important to advance lastmatchrestart during this printing so
+        that it interacts correctly with any "before" printing below. Print
+        each line's data using fwrite() in case there are binary zeroes. */
+
+        while (lastmatchrestart < p)
+          {
+          char *pp = lastmatchrestart;
+          if (printname != NULL) fprintf(stdout, "%s-", printname);
+          if (number) fprintf(stdout, "%d-", lastmatchnumber++);
+          pp = end_of_line(pp, endptr, &ellength);
+          FWRITE(lastmatchrestart, 1, pp - lastmatchrestart, stdout);
+          lastmatchrestart = pp;
+          }
+        if (lastmatchrestart != ptr) hyphenpending = TRUE;
+        }
+
+      /* If there were non-contiguous lines printed above, insert hyphens. */
+
+      if (hyphenpending)
+        {
+        fprintf(stdout, "--\n");
+        hyphenpending = FALSE;
+        hyphenprinted = TRUE;
+        }
+
+      /* See if there is a requirement to print some "before" lines for this
+      match. Again, don't print overlaps. */
+
+      if (before_context > 0)
+        {
+        int linecount = 0;
+        char *p = ptr;
+
+        while (p > main_buffer && (lastmatchnumber == 0 || p > lastmatchrestart) &&
+               linecount < before_context)
+          {
+          linecount++;
+          p = previous_line(p, main_buffer);
+          }
+
+        if (lastmatchnumber > 0 && p > lastmatchrestart && !hyphenprinted)
+          fprintf(stdout, "--\n");
+
+        while (p < ptr)
+          {
+          int ellength;
+          char *pp = p;
+          if (printname != NULL) fprintf(stdout, "%s-", printname);
+          if (number) fprintf(stdout, "%d-", linenumber - linecount--);
+          pp = end_of_line(pp, endptr, &ellength);
+          FWRITE(p, 1, pp - p, stdout);
+          p = pp;
+          }
+        }
+
+      /* Now print the matching line(s); ensure we set hyphenpending at the end
+      of the file if any context lines are being output. */
+
+      if (after_context > 0 || before_context > 0)
+        endhyphenpending = TRUE;
+
+      if (printname != NULL) fprintf(stdout, "%s:", printname);
+      if (number) fprintf(stdout, "%d:", linenumber);
+
+      /* In multiline mode, we want to print to the end of the line in which
+      the end of the matched string is found, so we adjust linelength and the
+      line number appropriately, but only when there actually was a match
+      (invert not set). Because the PCRE_FIRSTLINE option is set, the start of
+      the match will always be before the first newline sequence. */
+
+      if (multiline & !invert)
+        {
+        char *endmatch = ptr + offsets[1];
+        t = ptr;
+        while (t < endmatch)
+          {
+          t = end_of_line(t, endptr, &endlinelength);
+          if (t < endmatch) linenumber++; else break;
+          }
+        linelength = t - ptr - endlinelength;
+        }
+
+      /*** NOTE: Use only fwrite() to output the data line, so that binary
+      zeroes are treated as just another data character. */
+
+      /* This extra option, for Jeffrey Friedl's debugging requirements,
+      replaces the matched string, or a specific captured string if it exists,
+      with X. When this happens, colouring is ignored. */
+
+#ifdef JFRIEDL_DEBUG
+      if (S_arg >= 0 && S_arg < mrc)
+        {
+        int first = S_arg * 2;
+        int last  = first + 1;
+        FWRITE(ptr, 1, offsets[first], stdout);
+        fprintf(stdout, "X");
+        FWRITE(ptr + offsets[last], 1, linelength - offsets[last], stdout);
+        }
+      else
+#endif
+
+      /* We have to split the line(s) up if colouring, and search for further
+      matches, but not of course if the line is a non-match. */
+
+      if (do_colour && !invert)
+        {
+        int plength;
+        FWRITE(ptr, 1, offsets[0], stdout);
+        fprintf(stdout, "%c[%sm", 0x1b, colour_string);
+        FWRITE(ptr + offsets[0], 1, offsets[1] - offsets[0], stdout);
+        fprintf(stdout, "%c[00m", 0x1b);
+        for (;;)
+          {
+          startoffset = offsets[1];
+          if (startoffset >= (int)linelength + endlinelength ||
+              !match_patterns(matchptr, length, options, startoffset, offsets,
+                &mrc))
+            break;
+          FWRITE(matchptr + startoffset, 1, offsets[0] - startoffset, stdout);
+          fprintf(stdout, "%c[%sm", 0x1b, colour_string);
+          FWRITE(matchptr + offsets[0], 1, offsets[1] - offsets[0], stdout);
+          fprintf(stdout, "%c[00m", 0x1b);
+          }
+
+        /* In multiline mode, we may have already printed the complete line
+        and its line-ending characters (if they matched the pattern), so there
+        may be no more to print. */
+
+        plength = (int)((linelength + endlinelength) - startoffset);
+        if (plength > 0) FWRITE(ptr + startoffset, 1, plength, stdout);
+        }
+
+      /* Not colouring; no need to search for further matches */
+
+      else FWRITE(ptr, 1, linelength + endlinelength, stdout);
+      }
+
+    /* End of doing what has to be done for a match. If --line-buffered was
+    given, flush the output. */
+
+    if (line_buffered) fflush(stdout);
+    rc = 0;    /* Had some success */
+
+    /* Remember where the last match happened for after_context. We remember
+    where we are about to restart, and that line's number. */
+
+    lastmatchrestart = ptr + linelength + endlinelength;
+    lastmatchnumber = linenumber + 1;
+    }
+
+  /* For a match in multiline inverted mode (which of course did not cause
+  anything to be printed), we have to move on to the end of the match before
+  proceeding. */
+
+  if (multiline && invert && match)
+    {
+    int ellength;
+    char *endmatch = ptr + offsets[1];
+    t = ptr;
+    while (t < endmatch)
+      {
+      t = end_of_line(t, endptr, &ellength);
+      if (t <= endmatch) linenumber++; else break;
+      }
+    endmatch = end_of_line(endmatch, endptr, &ellength);
+    linelength = endmatch - ptr - ellength;
+    }
+
+  /* Advance to after the newline and increment the line number. The file
+  offset to the current line is maintained in filepos. */
+
+  ptr += linelength + endlinelength;
+  filepos += (int)(linelength + endlinelength);
+  linenumber++;
+
+  /* If input is line buffered, and the buffer is not yet full, read another
+  line and add it into the buffer. */
+
+  if (input_line_buffered && bufflength < (size_t)bufsize)
+    {
+    int add = read_one_line(ptr, bufsize - (int)(ptr - main_buffer), in);
+    bufflength += add;
+    endptr += add;
+    }
+
+  /* If we haven't yet reached the end of the file (the buffer is full), and
+  the current point is in the top 1/3 of the buffer, slide the buffer down by
+  1/3 and refill it. Before we do this, if some unprinted "after" lines are
+  about to be lost, print them. */
+
+  if (bufflength >= (size_t)bufsize && ptr > main_buffer + 2*bufthird)
+    {
+    if (after_context > 0 &&
+        lastmatchnumber > 0 &&
+        lastmatchrestart < main_buffer + bufthird)
+      {
+      do_after_lines(lastmatchnumber, lastmatchrestart, endptr, printname);
+      lastmatchnumber = 0;
+      }
+
+    /* Now do the shuffle */
+
+    memmove(main_buffer, main_buffer + bufthird, 2*bufthird);
+    ptr -= bufthird;
+
+#ifdef SUPPORT_LIBZ
+    if (frtype == FR_LIBZ)
+      bufflength = 2*bufthird +
+        gzread (ingz, main_buffer + 2*bufthird, bufthird);
+    else
+#endif
+
+#ifdef SUPPORT_LIBBZ2
+    if (frtype == FR_LIBBZ2)
+      bufflength = 2*bufthird +
+        BZ2_bzread(inbz2, main_buffer + 2*bufthird, bufthird);
+    else
+#endif
+
+    bufflength = 2*bufthird +
+      (input_line_buffered?
+       read_one_line(main_buffer + 2*bufthird, bufthird, in) :
+       fread(main_buffer + 2*bufthird, 1, bufthird, in));
+    endptr = main_buffer + bufflength;
+
+    /* Adjust any last match point */
+
+    if (lastmatchnumber > 0) lastmatchrestart -= bufthird;
+    }
+  }     /* Loop through the whole file */
+
+/* End of file; print final "after" lines if wanted; do_after_lines sets
+hyphenpending if it prints something. */
+
+if (!show_only_matching && !count_only)
+  {
+  do_after_lines(lastmatchnumber, lastmatchrestart, endptr, printname);
+  hyphenpending |= endhyphenpending;
+  }
+
+/* Print the file name if we are looking for those without matches and there
+were none. If we found a match, we won't have got this far. */
+
+if (filenames == FN_NOMATCH_ONLY)
+  {
+  fprintf(stdout, "%s\n", printname);
+  return 0;
+  }
+
+/* Print the match count if wanted */
+
+if (count_only)
+  {
+  if (count > 0 || !omit_zero_count)
+    {
+    if (printname != NULL && filenames != FN_NONE)
+      fprintf(stdout, "%s:", printname);
+    fprintf(stdout, "%d\n", count);
+    }
+  }
+
+return rc;
+}
+#else
 static int
 pcregrep(void *handle, int frtype, char *filename, char *printname)
 {
@@ -2084,6 +2662,7 @@ if (count_only)
 
 return rc;
 }
+#endif
 
 
 

@@ -4,7 +4,7 @@ QUERY=case
 GREPOUT=grep.txt
 PCREGREPOUT=pcregrep.txt
 
-zvsh pcregrep  $QUERY @input.txt > $PCREGREPOUT
+zvsh pcreigrep  $QUERY @input.txt > $PCREGREPOUT
 grep  $QUERY input.txt | tac > $GREPOUT
 diff $GREPOUT $PCREGREPOUT > /dev/null 2>&1
 if [ $? == 0 ]; then
@@ -13,7 +13,7 @@ else
 	echo -e "\033[01;31mFailed\033[00m"
 fi
 
-zvsh pcregrep -v $QUERY @input.txt > $PCREGREPOUT
+zvsh pcreigrep -v $QUERY @input.txt > $PCREGREPOUT
 grep  $QUERY -v input.txt | tac > $GREPOUT
 diff $GREPOUT $PCREGREPOUT > /dev/null 2>&1
 if [ $? == 0 ]; then
@@ -24,7 +24,7 @@ fi
 
 QUERY=Case
 
-zvsh pcregrep -i  $QUERY @input.txt > $PCREGREPOUT
+zvsh pcreigrep -i  $QUERY @input.txt > $PCREGREPOUT
 grep  $QUERY -i input.txt | tac > $GREPOUT
 diff $GREPOUT $PCREGREPOUT > /dev/null 2>&1
 if [ $? == 0 ]; then

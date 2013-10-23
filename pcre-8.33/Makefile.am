@@ -518,6 +518,13 @@ pcregrep_SOURCES = pcregrep.c
 pcregrep_CFLAGS = $(AM_CFLAGS)
 pcregrep_LDADD = $(LIBZ) $(LIBBZ2)
 pcregrep_LDADD += libpcre.la libpcreposix.la
+
+bin_PROGRAMS += pcreigrep
+pcreigrep_SOURCES = pcregrep.c
+pcreigrep_CFLAGS = $(AM_CFLAGS) -DINVERSE_GREP
+pcreigrep_LDADD = $(LIBZ) $(LIBBZ2)
+pcreigrep_LDADD += libpcre.la libpcreposix.la
+
 if WITH_GCOV
 pcregrep_CFLAGS += $(GCOV_CFLAGS)
 pcregrep_LDADD += $(GCOV_LIBS)
