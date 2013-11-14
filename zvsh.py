@@ -103,6 +103,7 @@ argparser.add_argument('executable', help='ZeroVM executable')
 argparser.add_argument('--zvm-image', help='ZeroVM image file(s)', action='append')
 argparser.add_argument('--zvm-debug', help='Enable ZeroVM debug output into zvsh.log', action='store_true')
 argparser.add_argument('--zvm-trace', help='Enable ZeroVM trace output into zvsh.trace.log', action='store_true')
+argparser.add_argument('--zvm-verbosity', help='ZeroVM debug verbosity level', type=int)
 argparser.add_argument('cmd_args', help='command line arguments', nargs=argparse.REMAINDER)
 args = argparser.parse_args()
 untrusted_args = [os.path.basename(args.executable)]
@@ -156,6 +157,16 @@ if len(nvram_fstab) > 0:
     for channel, mount in nvram_fstab.iteritems():
         (mp, access) = mount.split()
         nvram += 'channel=%s,mountpoint=%s,access=%s,removable=no\n' % (channel, mp, access)
+if sys.stdin.isatty() or sys.stdout.isatty() or sys.stderr.isatty():
+    nvram += '[mapping]\n'
+    if sys.stdin.isatty():
+        nvram += 'channel=/dev/stdin,mode=char\n'
+    if sys.stdout.isatty():
+        nvram += 'channel=/dev/stdout,mode=char\n'
+    if sys.stderr.isatty():
+        nvram += 'channel=/dev/stderr,mode=char\n'
+if args.zvm_verbosity:
+    nvram += '[debug]\nverbosity=%d\n' % args.zvm_verbosity
 manifest = ''
 for k, v in manifest_conf.iteritems():
     manifest += '%s = %s\n' % (k, v)
