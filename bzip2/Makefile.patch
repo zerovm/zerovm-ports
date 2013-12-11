@@ -17,7 +17,7 @@
  
  # Where you want it installed when you do 'make install'
 -PREFIX=/usr/local
-+PREFIX=/usr/x86_64-nacl
++PREFIX=${ZVM_PREFIX}/x86_64-nacl
  
  
  OBJS= blocksort.o  \

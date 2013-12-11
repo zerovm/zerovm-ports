@@ -5,7 +5,7 @@ How to compile
 	tar xvf lcms-1.19.tar.gz
 	cd lcms-1.19
 	autoreconf -vif
-	./configure --host=x86_64-nacl --enable-static --disable-shared --prefix=/usr/x86_64-nacl LIBS="-lz -llzma -lm"
+	./configure --host=x86_64-nacl --enable-static --disable-shared --prefix=${ZVM_PREFIX}/x86_64-nacl LIBS="-lz -llzma -lm"
 	make
 	sudo make install
 	cd ..
@@ -13,7 +13,7 @@ How to compile
 	tar xvf lcms2-2.4.tar.gz
 	cd lcms2-2.4
 	autoreconf -vif
-	./configure --host=x86_64-nacl --enable-static --disable-shared --prefix=/usr/x86_64-nacl LIBS="-lz -llzma -lm"
+	./configure --host=x86_64-nacl --enable-static --disable-shared --prefix=${ZVM_PREFIX}/x86_64-nacl LIBS="-lz -llzma -lm"
         make
         sudo make install
 

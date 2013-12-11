@@ -5,7 +5,7 @@ How to compile
 	tar xvf libpng-1.6.1.tar.gz
 	cd libpng-1.6.1
 	autoreconf -vif
-	./configure --host=x86_64-nacl --prefix=/usr/x86_64-nacl
+	./configure --host=x86_64-nacl --prefix=${ZVM_PREFIX}/x86_64-nacl
 	make
 	sudo make install
 
