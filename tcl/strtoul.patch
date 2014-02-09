@@ -1,0 +1,34 @@
+diff --git a/compat/strtoul.c b/compat/strtoul.c
+index 9d3f372..15c4fca 100644
+--- a/compat/strtoul.c
++++ b/compat/strtoul.c
+@@ -18,7 +18,7 @@
+  * characters).
+  */
+ 
+-static char cvtIn[] = {
++static const char cvtIn[] = {
+     0, 1, 2, 3, 4, 5, 6, 7, 8, 9,		/* '0' - '9' */
+     100, 100, 100, 100, 100, 100, 100,		/* punctuation */
+     10, 11, 12, 13, 14, 15, 16, 17, 18, 19,	/* 'A' - 'Z' */
+@@ -48,9 +48,9 @@ static char cvtIn[] = {
+  *----------------------------------------------------------------------
+  */
+ 
+-unsigned long int
++unsigned long int __attribute__((weak))
+ strtoul(
+-    CONST char *string,		/* String of ASCII digits, possibly preceded
++    const char *string,		/* String of ASCII digits, possibly preceded
+ 				 * by white space. For bases greater than 10,
+ 				 * either lower- or upper-case digits may be
+ 				 * used. */
+@@ -62,7 +62,7 @@ strtoul(
+ 				 * hex, "0" means octal, anything else means
+ 				 * decimal. */
+ {
+-    register CONST char *p;
++    register const char *p;
+     register unsigned long int result = 0;
+     register unsigned digit;
+     int anyDigits = 0;
