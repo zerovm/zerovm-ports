@@ -7,5 +7,5 @@ How to compile
 	autoreconf -vif
 	./configure --host=x86_64-nacl --prefix=${ZVM_PREFIX}/x86_64-nacl
 	make
-	sudo make install
+	make install
 
