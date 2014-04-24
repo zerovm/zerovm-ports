@@ -1,0 +1,44 @@
+--- libiconv-1.14/build-aux/config.sub	2014-04-24 17:45:40.053423465 +0300
++++ libiconv-1.14/build-aux/config.sub	2014-04-24 17:45:40.053423465 +0300
+@@ -758,6 +758,10 @@
+ 		basic_machine=i370-ibm
+ 		os=-mvs
+ 		;;
++	nacl)
++		basic_machine=le32-unknown
++		os=-nacl
++		;;
+ 	ncr3000)
+ 		basic_machine=i486-ncr
+ 		os=-sysv4
+@@ -1415,6 +1419,8 @@
+ 	-dicos*)
+ 		os=-dicos
+ 		;;
++	-nacl*)
++		;;
+ 	-none)
+ 		;;
+ 	*)
+--- libiconv-1.14/libcharset/build-aux/config.sub	2009-06-21 14:17:33.000000000 +0300
++++ libiconv-1.14/libcharset/build-aux/config.sub	2014-04-24 18:13:12.493617475 +0300
+@@ -715,6 +715,10 @@
+ 		basic_machine=i370-ibm
+ 		os=-mvs
+ 		;;
++	nacl)
++		basic_machine=le32-unknown
++		os=-nacl
++		;;
+ 	ncr3000)
+ 		basic_machine=i486-ncr
+ 		os=-sysv4
+@@ -1344,6 +1348,8 @@
+ 	-zvmoe)
+ 		os=-zvmoe
+ 		;;
++	-nacl*)
++		;;
+ 	-none)
+ 		;;
+ 	*)
