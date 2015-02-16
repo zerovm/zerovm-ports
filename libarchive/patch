@@ -1,0 +1,17 @@
+diff -Naur orig-libarchive-3.1.2/libarchive/archive_read_support_filter_program.c libarchive-3.1.2/libarchive/archive_read_support_filter_program.c
+--- orig-libarchive-3.1.2/libarchive/archive_read_support_filter_program.c	2013-02-08 05:24:42.000000000 +0200
++++ libarchive-3.1.2/libarchive/archive_read_support_filter_program.c	2015-02-15 14:42:52.996962457 +0200
+@@ -58,6 +58,8 @@
+ #include "archive_read_private.h"
+ #include "filter_fork.h"
+ 
++#include <zrtstub.h>
++
+ 
+ #if ARCHIVE_VERSION_NUMBER < 4000000
+ /* Deprecated; remove in libarchive 4.0 */
+diff -Naur orig-libarchive-3.1.2/README.zrt libarchive-3.1.2/README.zrt
+--- orig-libarchive-3.1.2/README.zrt	1970-01-01 02:00:00.000000000 +0200
++++ libarchive-3.1.2/README.zrt	2015-02-16 21:45:13.293939210 +0200
+@@ -0,0 +1 @@
++./configure --without-xml2 --host=x86_64-nacl --prefix=/opt/zerovm/x86_64-nacl 
