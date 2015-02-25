@@ -1,0 +1,216 @@
+diff -Naur unionfs-fuse-orig/fuse/unionfs.h unionfs-fuse/fuse/unionfs.h
+--- unionfs-fuse-orig/fuse/unionfs.h	1970-01-01 02:00:00.000000000 +0200
++++ unionfs-fuse/fuse/unionfs.h	2015-02-19 22:02:26.835873031 +0200
+@@ -0,0 +1,26 @@
++#ifndef __UNIONFS_FUSE_H__
++#define __UNIONFS_FUSE_H__
++
++extern int unionfs_main(int, char**);
++#define FUSE_UNIONFS_NAME "unionfs"
++#define FUSE_UNIONFS_ARGS_FILL_WRITE(argc_p, argv_p, mntfs, mntpoint) \
++    *argv_p = malloc(sizeof(char*) * 6);                                \
++    *(argc_p) = 0;                                                      \
++    (*(argv_p))[(*argc_p)++] = strdup( "unionfs");                      \
++    (*(argv_p))[(*argc_p)++] = strdup( "-o");                           \
++    (*(argv_p))[(*argc_p)++] = strdup( "cow");                          \
++    (*(argv_p))[(*argc_p)++] = strdup (mntfs);                          \
++    (*(argv_p))[(*argc_p)++] = strdup (mntpoint);                       \
++    (*(argv_p))[(*argc_p)] = NULL;
++
++#define FUSE_UNIONFS_ARGS_FILL_RONLY(argc_p, argv_p, mntfs, mntpoint)   \
++    *argv_p = malloc(sizeof(char*) * 6);                                \
++    *(argc_p) = 0;                                                      \
++    (*(argv_p))[(*argc_p)++] = strdup( "unionfs");                      \
++    (*(argv_p))[(*argc_p)++] = strdup( "-o");                           \
++    (*(argv_p))[(*argc_p)++] = strdup( "cow");                          \
++    (*(argv_p))[(*argc_p)++] = strdup (mntfs);                          \
++    (*(argv_p))[(*argc_p)++] = strdup (mntpoint);                       \
++    (*(argv_p))[(*argc_p)] = NULL;
++
++#endif /*__UNIONFS_FUSE_H__*/
+diff -Naur unionfs-fuse-orig/README.zrt unionfs-fuse/README.zrt
+--- unionfs-fuse-orig/README.zrt	1970-01-01 02:00:00.000000000 +0200
++++ unionfs-fuse/README.zrt	2015-02-25 15:07:18.532273395 +0200
+@@ -0,0 +1,3 @@
++cd src
++PREFIX=$ZVM_PREFIX CFLAGS="-Dexit=exit_fuse_main -D__ZRT__" CC=x86_64-nacl-gcc make clean all install
++
+diff -Naur unionfs-fuse-orig/src/cow_utils.c unionfs-fuse/src/cow_utils.c
+--- unionfs-fuse-orig/src/cow_utils.c	2015-02-25 14:16:14.592409481 +0200
++++ unionfs-fuse/src/cow_utils.c	2015-02-23 12:36:31.952766605 +0200
+@@ -166,7 +166,11 @@
+ #ifdef VM_AND_BUFFER_CACHE_SYNCHRONIZED
+ 	if (fs->st_size > 0 && fs->st_size <= 8 * 1048576) {
+ 		if ((p = mmap(NULL, (size_t)fs->st_size, PROT_READ,
++#ifdef __ZRT__
++		    0, from_fd, (off_t)0)) == MAP_FAILED) {
++#else
+ 		    MAP_FILE|MAP_SHARED, from_fd, (off_t)0)) == MAP_FAILED) {
++#endif //__ZRT__
+ 			USYSLOG(LOG_WARNING,   "mmap: %s", cow->from_path);
+ 			rval = 1;
+ 		} else {
+diff -Naur unionfs-fuse-orig/src/debug.c unionfs-fuse/src/debug.c
+--- unionfs-fuse-orig/src/debug.c	2015-02-25 14:16:14.592409481 +0200
++++ unionfs-fuse/src/debug.c	2015-02-18 15:20:40.307792925 +0200
+@@ -3,10 +3,10 @@
+ * Copyright: Radek Podgorny <radek@podgorny.cz>, 
+ *            Bernd Schubert <bernd.schubert@fastmail.fm>
+ */
++#include <pthread.h>
+ #include <stdio.h>
+ #include <errno.h>
+ #include <string.h>
+-#include <pthread.h>
+ 
+ #include "opts.h"
+ #include "debug.h"
+diff -Naur unionfs-fuse-orig/src/general.c unionfs-fuse/src/general.c
+--- unionfs-fuse-orig/src/general.c	2015-02-25 14:16:14.592409481 +0200
++++ unionfs-fuse/src/general.c	2015-02-18 15:20:49.483736194 +0200
+@@ -11,6 +11,7 @@
+ *
+ */
+ 
++#include <pthread.h>
+ #include <stdio.h>
+ #include <stdarg.h>
+ #include <string.h>
+@@ -21,7 +22,6 @@
+ #include <errno.h>
+ #include <pwd.h>
+ #include <grp.h>
+-#include <pthread.h>
+ 
+ #include "unionfs.h"
+ #include "opts.h"
+diff -Naur unionfs-fuse-orig/src/Makefile unionfs-fuse/src/Makefile
+--- unionfs-fuse-orig/src/Makefile	2015-02-25 14:16:14.592409481 +0200
++++ unionfs-fuse/src/Makefile	2015-02-25 14:39:57.418617541 +0200
+@@ -1,5 +1,5 @@
+ CFLAGS += -Wall
+-CPPFLAGS += $(shell pkg-config --cflags fuse)
++CPPFLAGS += $(shell PKG_CONFIG_PATH=$(PREFIX)/x86_64-nacl/lib/pkgconfig pkg-config --cflags fuse)
+ CPPFLAGS += -DFUSE_USE_VERSION=26
+ 
+ CPPFLAGS += -DLIBC_XATTR # glibc nowadays includes xattr
+@@ -19,7 +19,7 @@
+ UNIONFSCTL_OBJ = unionfsctl.o
+ 
+ 
+-all: unionfs unionfsctl
++all: libunionfs.a
+ 
+ unionfs: $(UNIONFS_OBJ) $(HASHTABLE_OBJ) uioctl.h version.h
+ 	$(CC) $(LDFLAGS) -o $@ $(UNIONFS_OBJ) $(HASHTABLE_OBJ) $(LIB)
+@@ -27,7 +27,14 @@
+ unionfsctl: $(UNIONFSCTL_OBJ) uioctl.h version.h
+ 	$(CC) $(LDFLAGS) -o $@ $(UNIONFSCTL_OBJ)
+ 
++libunionfs.a: $(UNIONFS_OBJ) $(HASHTABLE_OBJ) uioctl.h version.h
++	$(AR) rcs $@ $(UNIONFS_OBJ) $(HASHTABLE_OBJ)
++
++install: libunionfs.a
++	install -m 0644 ../fuse/unionfs.h $(PREFIX)/x86_64-nacl/include/fuse/unionfs.h
++	install -m 0644 libunionfs.a $(PREFIX)/x86_64-nacl/lib
++
+ clean:
+ 	rm -f unionfs
+ 	rm -f unionfsctl
+-	rm -f *.o
++	rm -f *.o *.a
+diff -Naur unionfs-fuse-orig/src/opts.c unionfs-fuse/src/opts.c
+--- unionfs-fuse-orig/src/opts.c	2015-02-25 14:16:14.596409464 +0200
++++ unionfs-fuse/src/opts.c	2015-02-18 19:12:20.361014982 +0200
+@@ -8,6 +8,7 @@
+ *            Bernd Schubert <bernd-schubert@gmx.de>
+ */
+ 
++#include <pthread.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <unistd.h>
+@@ -15,7 +16,6 @@
+ #include <errno.h>
+ #include <sys/time.h>
+ #include <sys/resource.h>
+-#include <pthread.h>
+ 
+ #include "conf.h"
+ #include "opts.h"
+@@ -86,9 +86,13 @@
+ 			__func__, arg);
+ 		exit(1);
+ 	}
++#ifndef __ZRT__
+ 	rlim.rlim_cur = max_files;
+ 	rlim.rlim_max = max_files;
+ 	if (setrlimit(RLIMIT_NOFILE, &rlim)) {
++#else
++	if (0) {
++#endif
+ 		fprintf(stderr, "%s: Setting the maximum number of files failed: %s\n",
+ 			__func__, strerror(errno));
+ 		exit(1);
+diff -Naur unionfs-fuse-orig/src/uioctl.h unionfs-fuse/src/uioctl.h
+--- unionfs-fuse-orig/src/uioctl.h	2015-02-25 14:16:14.596409464 +0200
++++ unionfs-fuse/src/uioctl.h	2015-02-18 15:20:07.099997639 +0200
+@@ -15,8 +15,8 @@
+ enum unionfs_ioctls {
+ 	UNIONFS_ONOFF_DEBUG         = _IOW('E', 0, int),
+ 	UNIONFS_SET_DEBUG_FILE      = _IOW('E', 1, char[PATHLEN_MAX]),
+-	UNIONFS_STATS_BYTES_READ    = _IOW('E', 2, void),
+-	UNIONFS_STATS_BYTES_WRITTEN = _IOW('E', 3, void),
++	UNIONFS_STATS_BYTES_READ    = _IOW('E', 2, int), //void
++	UNIONFS_STATS_BYTES_WRITTEN = _IOW('E', 3, int), //void
+ } unionfs_ioctls_t;
+ 
+ #endif // UIOCTL_H_
+diff -Naur unionfs-fuse-orig/src/unionfs.c unionfs-fuse/src/unionfs.c
+--- unionfs-fuse-orig/src/unionfs.c	2015-02-25 14:16:14.596409464 +0200
++++ unionfs-fuse/src/unionfs.c	2015-02-20 22:23:53.989837576 +0200
+@@ -831,7 +831,7 @@
+ #endif
+ };
+ 
+-int main(int argc, char *argv[]) {
++int unionfs_main(int argc, char *argv[]) {
+ 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+ 
+ 	init_syslog();
+diff -Naur unionfs-fuse-orig/src/usyslog.c unionfs-fuse/src/usyslog.c
+--- unionfs-fuse-orig/src/usyslog.c	2015-02-25 14:16:14.596409464 +0200
++++ unionfs-fuse/src/usyslog.c	2015-02-18 15:21:08.167620462 +0200
+@@ -15,6 +15,7 @@
+  *   our filesystem thread(s) cannot stall from syslog() calls.
+  */
+ 
++#include <pthread.h>
+ #include <stdio.h>
+ #include <unistd.h>
+ #include <string.h>
+@@ -27,7 +28,6 @@
+ #include <malloc.h>
+ #endif
+ 
+-#include <pthread.h>
+ #include <stdarg.h>
+ 
+ #include "usyslog.h"
+diff -Naur unionfs-fuse-orig/src/usyslog.h unionfs-fuse/src/usyslog.h
+--- unionfs-fuse-orig/src/usyslog.h	2015-02-25 14:16:14.596409464 +0200
++++ unionfs-fuse/src/usyslog.h	2015-02-23 12:31:19.821785378 +0200
+@@ -23,9 +23,12 @@
+ void usyslog(int priority, const char *format, ...);
+ 
+ 
++#ifdef __ZRT__
++#define USYSLOG(priority, format, ...)
++#else
+ #define USYSLOG(priority, format, ...)  			\
+ 	do {							\
+ 		DBG(format, ##__VA_ARGS__);			\
+ 		usyslog(priority, format, ##__VA_ARGS__);	\
+ 	} while (0);
+-
++#endif
