@@ -1,0 +1,180 @@
+diff -Naur fuse-2.9.3_orig/lib/fuse.c fuse-2.9.3/lib/fuse.c
+--- fuse-2.9.3_orig/lib/fuse.c	2013-07-01 10:40:39.000000000 +0300
++++ fuse-2.9.3/lib/fuse.c	2015-02-15 14:13:54.834360163 +0200
+@@ -10,6 +10,7 @@
+ /* For pthread_rwlock_t */
+ #define _GNU_SOURCE
+ 
++#include <pthread.h>
+ #include "config.h"
+ #include "fuse_i.h"
+ #include "fuse_lowlevel.h"
+@@ -38,6 +39,8 @@
+ #include <sys/time.h>
+ #include <sys/mman.h>
+ 
++#include <zrtstub.h>
++
+ #define FUSE_NODE_SLAB 1
+ 
+ #ifndef MAP_ANONYMOUS
+diff -Naur fuse-2.9.3_orig/lib/fuse_loop_mt.c fuse-2.9.3/lib/fuse_loop_mt.c
+--- fuse-2.9.3_orig/lib/fuse_loop_mt.c	2013-07-01 10:40:39.000000000 +0300
++++ fuse-2.9.3/lib/fuse_loop_mt.c	2015-01-22 16:53:03.265936144 +0200
+@@ -6,6 +6,7 @@
+   See the file COPYING.LIB.
+ */
+ 
++#include <pthread.h>
+ #include "fuse_lowlevel.h"
+ #include "fuse_misc.h"
+ #include "fuse_kernel.h"
+@@ -76,10 +77,13 @@
+ 			.size = w->bufsize,
+ 		};
+ 		int res;
+-
++#ifndef __ZRT__
+ 		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
++#endif
+ 		res = fuse_session_receive_buf(mt->se, &fbuf, &ch);
++#ifndef __ZRT__
+ 		pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
++#endif
+ 		if (res == -EINTR)
+ 			continue;
+ 		if (res <= 0) {
+diff -Naur fuse-2.9.3_orig/lib/fuse_signals.c fuse-2.9.3/lib/fuse_signals.c
+--- fuse-2.9.3_orig/lib/fuse_signals.c	2013-02-18 11:41:39.000000000 +0200
++++ fuse-2.9.3/lib/fuse_signals.c	2015-02-15 14:24:52.112348732 +0200
+@@ -12,6 +12,8 @@
+ #include <string.h>
+ #include <signal.h>
+ 
++#include <zrtstub.h>
++
+ static struct fuse_session *fuse_instance;
+ 
+ static void exit_handler(int sig)
+diff -Naur fuse-2.9.3_orig/lib/helper.c fuse-2.9.3/lib/helper.c
+--- fuse-2.9.3_orig/lib/helper.c	2013-07-01 10:40:53.000000000 +0300
++++ fuse-2.9.3/lib/helper.c	2015-02-16 23:24:16.760939137 +0200
+@@ -22,6 +22,8 @@
+ #include <errno.h>
+ #include <sys/param.h>
+ 
++#include <zrtstub.h>
++
+ enum  {
+ 	KEY_HELP,
+ 	KEY_HELP_NOHEADER,
+@@ -292,13 +294,11 @@
+ 	if (fuse == NULL)
+ 		goto err_unmount;
+ 
+-	res = fuse_daemonize(foreground);
+-	if (res == -1)
+-		goto err_unmount;
+-
++#ifndef __ZRT__
+ 	res = fuse_set_signal_handlers(fuse_get_session(fuse));
+ 	if (res == -1)
+ 		goto err_unmount;
++#endif
+ 
+ 	if (fd)
+ 		*fd = fuse_chan_fd(ch);
+@@ -351,14 +351,18 @@
+ 	if (fuse == NULL)
+ 		return 1;
+ 
++#ifdef __ZRT__
++        res = fuse_main_common_implem((struct fuse_operations *)op, mountpoint, user_data);
++#else
+ 	if (multithreaded)
+ 		res = fuse_loop_mt(fuse);
+ 	else
+ 		res = fuse_loop(fuse);
+ 
+ 	fuse_teardown_common(fuse, mountpoint);
++#endif
+ 	if (res == -1)
+-		return 1;
++            return 1;
+ 
+ 	return 0;
+ }
+diff -Naur fuse-2.9.3_orig/lib/mount.c fuse-2.9.3/lib/mount.c
+--- fuse-2.9.3_orig/lib/mount.c	2013-07-01 10:55:15.000000000 +0300
++++ fuse-2.9.3/lib/mount.c	2015-02-16 23:23:47.181316423 +0200
+@@ -26,6 +26,8 @@
+ #include <sys/wait.h>
+ #include <sys/mount.h>
+ 
++#include <zrtstub.h>
++
+ #ifdef __NetBSD__
+ #include <perfuse.h>
+ 
+@@ -432,6 +434,10 @@
+ 	int fd;
+ 	int res;
+ 
++#ifdef __ZRT__
++	fd=1;
++#endif
++
+ 	if (!mnt) {
+ 		fprintf(stderr, "fuse: missing mountpoint parameter\n");
+ 		return -1;
+@@ -444,6 +450,8 @@
+ 		return -1;
+ 	}
+ 
++    /*ZRT: nonempty option & fuse deivice makes no sence*/
++#ifndef __ZRT__
+ 	if (!mo->nonempty) {
+ 		res = fuse_mnt_check_empty("fuse", mnt, stbuf.st_mode,
+ 					   stbuf.st_size);
+@@ -466,6 +474,7 @@
+ 				devname, strerror(errno));
+ 		return -1;
+ 	}
++#endif /*__ZRT__*/
+ 
+ 	snprintf(tmp, sizeof(tmp),  "fd=%i,rootmode=%o,user_id=%i,group_id=%i",
+ 		 fd, stbuf.st_mode & S_IFMT, getuid(), getgid());
+@@ -492,6 +501,8 @@
+ 	strcpy(source,
+ 	       mo->fsname ? mo->fsname : (mo->subtype ? mo->subtype : devname));
+ 
++#ifndef __ZRT__
++	/*ZRT: mount function not supported*/
+ 	res = mount(source, mnt, type, mo->flags, mo->kernel_opts);
+ 	if (res == -1 && errno == ENODEV && mo->subtype) {
+ 		/* Probably missing subtype support */
+@@ -525,6 +536,7 @@
+ 
+ 		goto out_close;
+ 	}
++#endif /*__ZRT__*/
+ 
+ #ifndef __NetBSD__
+ #ifndef IGNORE_MTAB
+diff -Naur fuse-2.9.3_orig/lib/mount_util.c fuse-2.9.3/lib/mount_util.c
+--- fuse-2.9.3_orig/lib/mount_util.c	2013-07-01 10:25:36.000000000 +0300
++++ fuse-2.9.3/lib/mount_util.c	2015-02-15 14:21:54.240899089 +0200
+@@ -24,6 +24,8 @@
+ #include <sys/mount.h>
+ #include <sys/param.h>
+ 
++#include <zrtstub.h>
++
+ #ifdef __NetBSD__
+ #define umount2(mnt, flags) unmount(mnt, (flags == 2) ? MNT_FORCE : 0)
+ #define mtab_needs_update(mnt) 0
+diff -Naur fuse-2.9.3_orig/README.zrt fuse-2.9.3/README.zrt
+--- fuse-2.9.3_orig/README.zrt	1970-01-01 02:00:00.000000000 +0200
++++ fuse-2.9.3/README.zrt	2015-02-11 12:24:57.530231431 +0200
+@@ -0,0 +1 @@
++LIBS=-lfuseglue CFLAGS="-D__ZRT__ -D_ATFILE_SOURCE -g2" ./configure --host=x86_64-nacl --prefix=/opt/zerovm/x86_64-nacl

@@ -1,0 +1,174 @@
+diff -Naur orig-archivemount-0.8.3/archivemount.c archivemount-0.8.3/archivemount.c
+--- orig-archivemount-0.8.3/archivemount.c	2013-10-24 07:52:59.000000000 +0300
++++ archivemount-0.8.3/archivemount.c	2015-02-15 20:17:48.417163430 +0200
+@@ -23,6 +23,7 @@
+ 
+ #include "config.h"
+ 
++#include <pthread.h>
+ #include <fuse.h>
+ #include <fuse_opt.h>
+ #include <stdio.h>
+@@ -44,9 +45,10 @@
+ #include <wchar.h>
+ #include <archive.h>
+ #include <archive_entry.h>
+-#include <pthread.h>
+ #include <regex.h>
+ 
++#include <zrtstub.h>
++
+ #include "uthash.h"
+ 
+   /**********/
+@@ -82,7 +84,7 @@
+ 	UT_hash_handle hh;
+ } NODE;
+ 
+-struct options {
++struct archivemount_options {
+ 	int readonly;
+ 	int nobackup;
+ 	int nosave;
+@@ -95,7 +97,7 @@
+ 	KEY_HELP,
+ };
+ 
+-#define AR_OPT(t, p, v) { t, offsetof(struct options, p), v }
++#define AR_OPT(t, p, v) { t, offsetof(struct archivemount_options, p), v }
+ 
+ static struct fuse_opt ar_opts[] =
+ {
+@@ -116,13 +118,23 @@
+  /* globals */
+ /***********/
+ 
++#define archiveFd archivemount_archiveFd
++#define archiveModified archivemount_archiveModified
++#define archiveWriteable archivemount_archiveWriteable
++#define root archivemount_root
++#define options archivemount_options
++#define mtpt archivemount_mtpt
++#define archiveFile archivemount_archiveFile
++#define lock archivemount_lock
++#define strchrnul archivemount_strchrnul
++
+ static int archiveFd; /* file descriptor of archive file, just to keep the
+ 			 beast alive in case somebody deletes the file while
+ 			 it is mounted */
+ static int archiveModified = 0;
+ static int archiveWriteable = 0;
+ static NODE *root;
+-struct options options;
++struct archivemount_options options;
+ char *mtpt = NULL;
+ char *archiveFile = NULL;
+ pthread_mutex_t lock; /* global node tree lock */
+@@ -2361,8 +2373,9 @@
+ 	fprintf( stderr, "Usage:              (-v|--version)\n" );
+ }
+ 
++#define exit return
+ int
+-main( int argc, char **argv )
++archivemount_main( int argc, char **argv )
+ {
+ 	int fuse_ret;
+ 	struct stat st;
+@@ -2370,7 +2383,7 @@
+ 	struct fuse_args args = FUSE_ARGS_INIT(argc, argv);
+ 
+ 	/* parse cmdline args */
+-	memset( &options, 0, sizeof( struct options ) );
++	memset( &options, 0, sizeof( struct archivemount_options ) );
+ 	if( fuse_opt_parse( &args, &options, ar_opts, ar_opt_proc ) == -1 )
+ 		return -1;
+ 	if( archiveFile==NULL ) {
+@@ -2426,6 +2439,8 @@
+ 	 */
+ 	fuse_opt_add_arg( &args, "-s" );
+ 
++#undef FUSE_VERSION
++#define FUSE_VERSION 25
+ #if FUSE_VERSION >= 26
+ 	{
+ 		struct fuse *fuse;
+diff -Naur orig-archivemount-0.8.3/configure.ac archivemount-0.8.3/configure.ac
+--- orig-archivemount-0.8.3/configure.ac	2013-10-24 07:54:08.000000000 +0300
++++ archivemount-0.8.3/configure.ac	2015-02-08 19:58:31.035058586 +0200
+@@ -4,6 +4,9 @@
+ AM_INIT_AUTOMAKE([-Wall -Werror foreign])
+ AC_PROG_CC 
+ 
++AC_PROG_RANLIB
++AM_PROG_AR
++
+ AC_CONFIG_HEADERS([config.h]) 
+ AC_CONFIG_FILES([Makefile archivemount.1]) 
+ 
+diff -Naur orig-archivemount-0.8.3/fuse/archivemount.h archivemount-0.8.3/fuse/archivemount.h
+--- orig-archivemount-0.8.3/fuse/archivemount.h	1970-01-01 02:00:00.000000000 +0200
++++ archivemount-0.8.3/fuse/archivemount.h	2015-02-11 23:29:17.096751432 +0200
+@@ -0,0 +1,24 @@
++#ifndef __ARCHIVEMOUNT_H__
++#define __ARCHIVEMOUNT_H__
++
++extern int archivemount_main(int, char**);
++#define FUSE_ARCHIVEMOUNT_NAME "archivemount"
++#define FUSE_ARCHIVEMOUNT_ARGS_FILL_WRITE(argc_p, argv_p, mntfile, mntpoint) \
++    *argv_p = malloc(sizeof(char*) * 4);                                \
++    *(argc_p) = 0;                                                      \
++    (*(argv_p))[(*argc_p)++] = strdup( "archivemount");                 \
++    (*(argv_p))[(*argc_p)++] = strdup (mntfile);                        \
++    (*(argv_p))[(*argc_p)++] = strdup (mntpoint);                       \
++    (*(argv_p))[(*argc_p)] = NULL;
++
++#define FUSE_ARCHIVEMOUNT_ARGS_FILL_RONLY(argc_p, argv_p, mntfile, mntpoint) \
++    *argv_p = malloc(sizeof(char*) * 6);                                \
++    *(argc_p) = 0;                                                      \
++    (*(argv_p))[(*argc_p)++] = strdup( "archivemount");                 \
++    (*(argv_p))[(*argc_p)++] = strdup (mntfile);                        \
++    (*(argv_p))[(*argc_p)++] = strdup (mntpoint);                       \
++    (*(argv_p))[(*argc_p)++] = strdup("-o");                            \
++    (*(argv_p))[(*argc_p)++] = strdup("readonly");                      \
++    (*(argv_p))[(*argc_p)] = NULL;
++
++#endif /*__FUSEGLUE_ARCHIVEMOUNT_H__*/
+diff -Naur orig-archivemount-0.8.3/Makefile.am archivemount-0.8.3/Makefile.am
+--- orig-archivemount-0.8.3/Makefile.am	2013-10-20 13:52:39.000000000 +0300
++++ archivemount-0.8.3/Makefile.am	2015-02-10 14:18:33.664235931 +0200
+@@ -1,12 +1,22 @@
+-bin_PROGRAMS = archivemount
+-archivemount_SOURCES = archivemount.c uthash.h
+-archivemount_LDADD = $(ARCHIVE_LIBS) $(FUSE_LIBS)
+-archivemount_CFLAGS = $(FUSE_CFLAGS)
++lib_LIBRARIES = libarchivemount.a
++libarchivemount_a_SOURCES = archivemount.c uthash.h
++libarchivemount_a_CFLAGS = $(FUSE_CFLAGS) -Dmain=archivemount_main
+ if DEBUG
+-archivemount_CFLAGS += -g
++libarchivemount_a_CFLAGS += -g
+ else
+-archivemount_CFLAGS += -O2
++libarchivemount_a_CFLAGS += -O2
+ endif
++nobase_include_HEADERS = fuse/archivemount.h
++
++#bin_PROGRAMS = archivemount
++#archivemount_SOURCES = archivemount.c uthash.h
++#archivemount_LDADD = $(ARCHIVE_LIBS) $(FUSE_LIBS)
++#archivemount_CFLAGS = $(FUSE_CFLAGS)
++#if DEBUG
++#archivemount_CFLAGS += -g
++#else
++#archivemount_CFLAGS += -O2
++#endif
+ 
+ dist_man_MANS = archivemount.1
+ EXTRA_DIST = CHANGELOG
+diff -Naur orig-archivemount-0.8.3/README.zrt archivemount-0.8.3/README.zrt
+--- orig-archivemount-0.8.3/README.zrt	1970-01-01 02:00:00.000000000 +0200
++++ archivemount-0.8.3/README.zrt	2015-02-11 13:18:56.587619451 +0200
+@@ -0,0 +1,2 @@
++aclocal && autoreconf -vif && LIBS="-lbz2 -lz" CFLAGS="-D__ZRT__ -I/opt/zerovm/x86_64-nacl/include" ./configure --host=x86_64-nacl --prefix=/opt/zerovm/x86_64-nacl --enable-debug
++make
